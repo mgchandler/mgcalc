@@ -39,8 +39,9 @@
 //! 0.7071067811865476+0.7071067811865475i
 //! ```
 
-use std::f64::consts::{E, PI};
 use std::error::Error;
+use std::f64::consts::{E, PI};
+use std::iter::from_fn;
 use num::complex::Complex;
 
 
@@ -121,7 +122,7 @@ impl Expression {
     fn parse(&mut self) -> Result<(), Box<dyn Error>> {
         // Loop through characters in the expression. Use `loop` rather than `for` or `while` so that we can evaluate sub-expressions inside brackets.
         let expression = self.expression.clone();
-        let mut expr_iter = expression.chars();
+        let mut expr_iter = expression.chars().peekable();
         loop {
             let character_opt = expr_iter.next();
             match character_opt {
@@ -133,22 +134,13 @@ impl Expression {
                 Some('(') => {
 
                     // Extract the new expression up to `)`.
-                    let mut new_expr = String::from("");
-                    loop {
-                        let character_opt = expr_iter.next();
-                        match character_opt {
+                    let new_expr: String = from_fn(|| expr_iter.next_if(|char| *char != ')')).collect();
 
-                            // End of input reached before closing bracket found.
-                            None => return Err("Syntax error: Missing `)`".into()),
-
-                            // Closing bracket found - evaluate sub-expression.
-                            Some(')') => break,
-
-                            // Keep on extracting.
-                            Some(character) => {
-                                new_expr += &character.to_string();
-                            },
-                    }}
+                    // The next value should be `)`, if not then the user has forgotten to include it.
+                    match expr_iter.next() {
+                        Some(')') => {},
+                        _ => return Err("Syntax error: Missing character `)`.".into()),
+                    }
 
                     // Make the new expression.
                     let new_expression = Expression::new(new_expr.as_str())?;
@@ -160,7 +152,18 @@ impl Expression {
                     self.valuestack.push(lastval + new_expression.solve()?.as_str());
                 },
 
-                // Pipe brackets denote absolute value. Evaluate in the same way as above
+                // Pipe brackets denote absolute value. Evaluate in the same way as above.
+                Some('|') => {
+                    let new_expr: String = from_fn(|| expr_iter.next_if(|char| *char != '|')).collect();
+                    match expr_iter.next() {
+                        Some('|') => {},
+                        _ => return Err("Syntax error: Missing character `|`.".into()),
+                    }
+                    let new_expression = Expression::new(new_expr.as_str())?;
+                    let lastval = self.valuestack.pop().unwrap_or_else(|| {String::from("")});
+                    let nextval = parse_value(new_expression.solve()?)?.norm();
+                    self.valuestack.push(lastval + nextval.to_string().as_str());
+                },
 
                 // Continue with the expression.
                 Some(character) => {
@@ -243,7 +246,7 @@ impl Expression {
         if self.operatorstack.gettop() != 0 {
             Err("Syntax error - operators remaining.".into())
         } else {
-            let value = self.valuestack.pop().unwrap().parse::<Complex<f64>>()?;
+            let value = parse_value(self.valuestack.pop().unwrap())?;
             match value {
                 Complex{re: x, im: y} if (y.abs() < f64::EPSILON * MAX_OPS as f64) => Ok(x.to_string()),
                 Complex{re: _, im: _} => Ok(value.to_string()),
@@ -295,16 +298,16 @@ mod tests {
         let expression3 = Expression::new("2*1")?;
         let expression4 = Expression::new("4/2")?;
         assert!(
-            ("2".parse::<Complex<f64>>()? - expression1.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("2"))? - parse_value(expression1.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         assert!(
-            ("2".parse::<Complex<f64>>()? - expression2.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("2"))? - parse_value(expression2.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         assert!(
-            ("2".parse::<Complex<f64>>()? - expression3.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("2"))? - parse_value(expression3.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         assert!(
-            ("2".parse::<Complex<f64>>()? - expression4.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("2"))? - parse_value(expression4.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         Ok(())
     }
@@ -313,7 +316,7 @@ mod tests {
     fn no_operations() -> Result<(), Box<dyn Error>> {
         let expression = Expression::new("8")?;
         assert!(
-            ("8".parse::<Complex<f64>>()? - expression.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("8"))? - parse_value(expression.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         Ok(())
     }
@@ -323,10 +326,10 @@ mod tests {
         let expression1 = Expression::new("1+2*3")?;
         let expression2 = Expression::new("1*3-2")?;
         assert!(
-            ("7".parse::<Complex<f64>>()? - expression1.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("7"))? - parse_value(expression1.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         assert!(
-            ("1".parse::<Complex<f64>>()? - expression2.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("1"))? - parse_value(expression2.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         Ok(())
     }
@@ -337,13 +340,13 @@ mod tests {
         let expression2 = Expression::new("10+1")?;
         let expression3 = Expression::new("2+23")?;
         assert!(
-            ("20".parse::<Complex<f64>>()? - expression1.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("20"))? - parse_value(expression1.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         assert!(
-            ("11".parse::<Complex<f64>>()? - expression2.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("11"))? - parse_value(expression2.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         assert!(
-            ("25".parse::<Complex<f64>>()? - expression3.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("25"))? - parse_value(expression3.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         Ok(())
     }
@@ -352,7 +355,7 @@ mod tests {
     fn negative_result() -> Result<(), Box<dyn Error>> {
         let expression = Expression::new("2-3")?;
         assert!(
-            ("-1".parse::<Complex<f64>>()? - expression.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("-1"))? - parse_value(expression.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         Ok(())
     }
@@ -363,13 +366,13 @@ mod tests {
         let expression2 = Expression::new("2.0*3.25")?;
         let expression3 = Expression::new("7/2")?;
         assert!(
-            ("7".parse::<Complex<f64>>()? - expression1.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("7"))? - parse_value(expression1.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         assert!(
-            ("6.5".parse::<Complex<f64>>()? - expression2.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("6.5"))? - parse_value(expression2.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         assert!(
-            ("3.5".parse::<Complex<f64>>()? - expression3.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("3.5"))? - parse_value(expression3.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         Ok(())
     }
@@ -378,7 +381,7 @@ mod tests {
     fn leading_negative() -> Result<(), Box<dyn Error>> {
         let expression = Expression::new("-1+13")?;
         assert!(
-            ("12".parse::<Complex<f64>>()? - expression.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("12"))? - parse_value(expression.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         Ok(())
     }
@@ -389,13 +392,13 @@ mod tests {
         let expression2 = Expression::new("6*2+2^3")?;
         let expression3 = Expression::new("(-1)^3")?;
         assert!(
-            (Complex::new(2.0, 0.0).powc(Complex::new(8.0, 0.0)) + 3.0 - expression1.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (Complex::new(2.0, 0.0).powc(Complex::new(8.0, 0.0)) + 3.0 - parse_value(expression1.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         assert!(
-            (Complex::new(2.0, 0.0).powc(Complex::new(3.0, 0.0)) + 6.0*2.0 - expression2.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (Complex::new(2.0, 0.0).powc(Complex::new(3.0, 0.0)) + 6.0*2.0 - parse_value(expression2.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         assert!(
-            (Complex::new(-1.0, 0.0).powc(Complex::new(3.0, 0.0)) - expression3.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (Complex::new(-1.0, 0.0).powc(Complex::new(3.0, 0.0)) - parse_value(expression3.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
     
         Ok(())
@@ -403,9 +406,15 @@ mod tests {
 
     #[test]
     fn brackets() -> Result<(), Box<dyn Error>> {
-        let expression = Expression::new("6*(8+2)")?;
+        let expression1 = Expression::new("6*(8+2)")?;
+        let expression2 = Expression::new("6*(8+2")?;
+        let expression3 = Expression::new("|-1|")?;
         assert!(
-            ("60".parse::<Complex<f64>>()? - expression.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (parse_value(String::from("60"))? - parse_value(expression1.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
+        );
+        assert!(expression2.solve().is_err());
+        assert!(
+            (parse_value(String::from("1"))? - parse_value(expression3.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         Ok(())
     }
@@ -425,10 +434,10 @@ mod tests {
         let expression1 = Expression::new("2*pi")?;
         let expression2 = Expression::new("2*e^(-3)")?;
         assert!(
-            (Complex::new(2.0*PI, 0.0) - expression1.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (Complex::new(2.0*PI, 0.0) - parse_value(expression1.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         assert!(
-            (Complex::new(2.0*E.powf(-3.0), 0.0) - expression2.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (Complex::new(2.0*E.powf(-3.0), 0.0) - parse_value(expression2.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         Ok(())
     }
@@ -437,14 +446,12 @@ mod tests {
     fn complex_vals() -> Result<(), Box<dyn Error>> {
         let expression1 = Expression::new("2i")?;
         let expression2 = Expression::new("1+2i")?;
-        let value = expression1.solve();
-        /* 
         assert!(
-            (Complex::new(0.0, 2.0) - expression1.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
+            (Complex::new(0.0, 2.0) - parse_value(expression1.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
         );
         assert!(
-            (Complex::new(1.0, 2.0) - expression2.solve()?.parse::<Complex<f64>>()?).norm() < f64::EPSILON * MAX_OPS as f64
-        );*/
+            (Complex::new(1.0, 2.0) - parse_value(expression2.solve()?)?).norm() < f64::EPSILON * MAX_OPS as f64
+        );
         Ok(())
     }
 }
