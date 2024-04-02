@@ -1,40 +1,78 @@
+//! # mgcalc
+//! 
+//! `mgcalc` is a test project which provides a calculator in the terminal.
+//! I usually have a terminal of some sort open, which typically does not support command line maths.
+//! Yes it would be trivial to either install an existing program or just launch Python, but this way I also get to learn something new.
+//! 
+//! ## Examples
+//! 
+//! See the tests for a full overview of the functionality, but as I go I'll periodically update these examples.
+//! Note that to use brackets, you may have to wrap the expression in quotation marks as Bash treats brackets in a special way.
+//! 
+//! - Mathematical operations
+//! ```custom
+//! $ mgcalc 2+3
+//! 5
+//! $ mgcalc 5-1/2
+//! 4.5
+//! $ mgcalc 2*2^7
+//! 256
+//! $ mgcalc "(-1)^3"
+//! -1
+//! ```
+//! 
+//! - Mathematical constants
+//! ```custom
+//! $ mgcalc 2*pi
+//! 6.283185307179586
+//! $ mgcalc "e^(-1)"
+//! 0.36787944117144233
+//! ```
+//! 
+//! ## Future plans
+//! 
+//! I'd really like to get some complex maths in here as well, as that is sometimes useful to have to hand.
+
 use std::f64::consts::{E, PI};
 use std::error::Error;
 
 
+/// Generic stack class. Could likely implement as a `Vec<T>` directly.
+/// Get a one with `Stack::new()`.
 pub struct Stack<T> {
     stack: Vec<T>,
     top: usize,
 }
 
 impl <T> Stack<T> {
+    /// Create a new instance of `Stack<T>`.
     pub fn new() -> Self {
         Stack {
             stack: Vec::new(),
             top: 0,
     }}
 
+    /// Add a new item to the top of the stack.
     pub fn push(&mut self, val: T) {
         self.top += 1;
         self.stack.push(val);
     }
 
+    /// Remove an item from the top of the stack, or return `None` if the stack is empty.
     pub fn pop(&mut self) -> Option<T> {
-        let val = self.stack.pop();
-        match val {
-            Some(x) => {
-                self.top -= 1;
-                Some(x)
-            },
-            None => None
-    }}
+        let val = self.stack.pop()?;
+        self.top -= 1;
+        Some(val)
+    }
 
+    /// Obtain the size of the stack.
     pub fn gettop(&self) -> usize {
         self.top
     }
 }
 
 
+/// Expression class. Initialise a new one directly with a `&str` using `Expression::new(s: &str)`, or using environment arguments using `Expression::from_args(args: Iterator<Item=String>)`.
 pub struct Expression {
     expression: String,
     valuestack: Stack<String>,
@@ -42,6 +80,7 @@ pub struct Expression {
 }
 
 impl Expression {
+    /// Create a new instance of Expression directly from a `&str`.
     pub fn new(expression: &str) -> Result<Self, &'static str> {
         Ok(Self { 
             expression: String::from(expression),
@@ -49,6 +88,7 @@ impl Expression {
             operatorstack: Stack::new(),
     })}
 
+    /// Create a new instance of Expression using `std::env::args()` directly.
     pub fn from_args(
         mut args: impl Iterator<Item = String>,
     ) -> Result<Self, &'static str> {
@@ -59,13 +99,15 @@ impl Expression {
             None => return Err("Did not get an expression.")
         };
 
-        Self::new(&expression)
+        Self::new(&expression.trim())
     }
 
+    /// Obtain the string representation of the expression.
     pub fn get_expression(&self) -> &str {
         &self.expression
     }
 
+    /// Work through the expression character by character, to add values and operators to the relevant stacks.
     fn parse(&mut self) -> Result<(), Box<dyn Error>> {
         // Loop through characters in the expression. Use `loop` rather than `for` or `while` so that we can evaluate sub-expressions inside brackets.
         let expression = self.expression.clone();
@@ -154,6 +196,7 @@ impl Expression {
         Ok(())
     }
 
+    /// Combine the top two values on `valuestack` using the top operator on `operatorstack`.
     fn simplify_expression_to_head(&mut self) -> Result<(), Box<dyn Error>> {
         // Parse left- and right-hand-side of operation into floats.
         let rhs: f64 = parse_value(self.valuestack.pop().unwrap())?;
@@ -174,6 +217,7 @@ impl Expression {
         Ok(())
     }
 
+    /// Solve the expression. Parses the result onto the stacks containing values and operators, and then calculates the result.
     pub fn solve(mut self) -> Result<String, Box<dyn Error>> {
         // Parse the function into solvable form.
         self.parse()?;
@@ -192,6 +236,11 @@ impl Expression {
 }
 
 
+/// Test two operations to work out if the previous one can be evaluated following the order of operations:
+/// 1) Brackets
+/// 2) Exponentials
+/// 3) Multiplication and Division
+/// 4) Addition and Subtraction
 pub fn is_ok_to_simplify(previous_op: char, following_op: char) -> bool {
     match (previous_op, following_op) {
         ('^', op) if (op == '+') | (op == '-') | (op == '*') | (op == '/') => {
@@ -206,6 +255,8 @@ pub fn is_ok_to_simplify(previous_op: char, following_op: char) -> bool {
     }
 }
 
+/// Convert strings to floats.
+/// Use a separate function rather than calling the `.parse()` method directly so that we can deal with constants such as `pi` and `e`.
 pub fn parse_value(s: String) -> Result<f64, Box<dyn Error>> {
     match s.to_lowercase().as_str() {
         "pi" => Ok(PI),
